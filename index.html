@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>QuizNova | Multiplayer</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <!-- FIREBASE SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: { sans: ['Nunito', 'sans-serif'] },
+            colors: { 
+                blooket: { main: '#3bc9db', dark: '#1098ad', accent: '#0b7285' },
+                kahoot: { purple: '#46178f', blue: '#1368ce', green: '#26890c' }
+            },
+            boxShadow: {
+                'arcade': '0 4px 0 rgba(0,0,0,0.2)',
+                'arcade-hover': '0 6px 0 rgba(0,0,0,0.2)',
+                'arcade-active': '0 0 0 rgba(0,0,0,0.2)',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      .btn-arcade { transition: all 0.1s; transform: translateY(0); }
+      .btn-arcade:active { transform: translateY(4px); box-shadow: none !important; }
+      .btn-arcade:hover { transform: translateY(-2px); box-shadow: 0 6px 0 rgba(0,0,0,0.2); }
+      .sidebar-link.active { background-color: #e0f2fe; color: #0284c7; border-right: 4px solid #0284c7; }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+      .custom-scroll::-webkit-scrollbar { width: 8px; }
+      .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+      .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+      
+      /* Pulse animation for lobby waiting */
+      @keyframes pulse-ring { 0% { transform: scale(0.8); opacity: 0.5; } 100% { transform: scale(1.2); opacity: 0; } }
+      .pulse-ring::before { content: ''; position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: inherit; border-radius: 50%; z-index: -1; animation: pulse-ring 2s infinite; }
+    </style>
+  </head>
+  <body class="bg-gray-100 font-sans text-gray-800 h-screen overflow-hidden selection:bg-indigo-200">
+
+    <!-- ================= AUTH SCREEN ================= -->
+    <div id="auth-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-indigo-600 to-purple-700">
+        <div class="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-md relative z-10 text-center animate-fade-in border-4 border-indigo-900">
+            <h1 class="text-4xl font-black text-indigo-800 mb-2 tracking-tighter">QUIZ NOVA</h1>
+            <p class="text-gray-500 mb-8 font-bold">Multiplayer Edition</p>
+
+            <!-- Login As Host -->
+            <button onclick="handleLogin('Teacher')" class="w-full bg-white border-2 border-gray-200 p-4 rounded-xl flex items-center gap-4 mb-6 hover:bg-gray-50 btn-arcade shadow-arcade group">
+                <div class="bg-purple-100 p-2 rounded-full">👑</div>
+                <div class="text-left">
+                    <div class="font-black text-gray-800 text-lg">Host A Game</div>
+                    <div class="text-xs font-bold text-gray-400 uppercase">For Teachers</div>
+                </div>
+                <div class="ml-auto text-indigo-500 font-bold">&rarr;</div>
+            </button>
+            
+            <!-- Join As Player -->
+            <div class="border-t border-gray-200 pt-6">
+                <p class="text-xs font-bold text-gray-400 mb-2 uppercase">Join Existing Game</p>
+                <input type="text" id="player-name-input" placeholder="Your Nickname" class="w-full bg-gray-50 border-2 border-gray-200 rounded-lg px-4 py-3 font-bold mb-2 outline-none focus:border-indigo-500">
+                <div class="flex gap-2">
+                    <input type="text" id="game-pin-input" placeholder="GAME PIN" class="flex-1 bg-gray-100 border-2 border-gray-200 rounded-lg px-4 py-3 font-black text-center text-xl outline-none focus:border-indigo-500 uppercase">
+                    <button onclick="joinGame()" class="bg-indigo-600 text-white font-black px-6 rounded-lg btn-arcade shadow-[0_4px_0_rgb(55,48,163)]">JOIN</button>
+                </div>
+                <p id="join-error" class="text-red-500 text-xs font-bold mt-2 hidden">Game not found!</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= HOST DASHBOARD ================= -->
+    <div id="app-layout" class="hidden flex h-screen w-full">
+        <!-- SIDEBAR -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col z-20 shadow-lg hidden md:flex">
+            <div class="p-6 flex items-center gap-3 border-b border-gray-100">
+                <div class="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center text-white font-black text-lg shadow-sm">Q</div>
+                <span class="font-black text-xl text-gray-800 tracking-tight">Quiz<span class="text-indigo-600">Nova</span></span>
+            </div>
+            <div class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+                <button onclick="nav('dashboard')" id="link-dashboard" class="sidebar-link w-full flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition">
+                    <span class="text-xl">🏠</span> Dashboard
+                </button>
+                <button onclick="nav('library')" id="link-library" class="sidebar-link w-full flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition active">
+                    <span class="text-xl">📚</span> My Sets
+                </button>
+                <button onclick="nav('reports')" id="link-reports" class="sidebar-link w-full flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition">
+                    <span class="text-xl">📊</span> History
+                </button>
+            </div>
+            <div class="p-4 border-t border-gray-100 bg-gray-50">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-purple-600 flex items-center justify-center text-white font-bold">T</div>
+                    <div class="flex flex-col">
+                        <span class="font-black text-gray-800 text-sm">Host</span>
+                        <span class="text-[10px] font-bold text-gray-400">Online</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 flex flex-col bg-gray-100 h-full overflow-hidden relative">
+            <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm z-10">
+                <h2 id="page-title" class="text-2xl font-black text-gray-800">My Library</h2>
+                <div class="flex items-center gap-3">
+                     <button onclick="openCreateModal()" class="hidden md:flex bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold text-sm shadow-[0_4px_0_rgb(55,48,163)] btn-arcade items-center gap-2">
+                        <span>+</span> Create Set
+                    </button>
+                </div>
+            </header>
+
+            <div id="content-area" class="flex-1 overflow-y-auto p-6 custom-scroll">
+                
+                <!-- 1. DASHBOARD VIEW -->
+                <div id="view-dashboard" class="hidden max-w-6xl mx-auto space-y-6 animate-fade-in">
+                    <!-- Welcome Banner -->
+                    <div class="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl p-8 text-white shadow-lg relative overflow-hidden">
+                        <div class="relative z-10">
+                            <h1 class="text-3xl font-black mb-2">Welcome back! 👋</h1>
+                            <p class="opacity-90 font-semibold max-w-lg">Ready to engage your students today? Choose a set from your library to start hosting.</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- News Widget -->
+                        <div class="md:col-span-2 bg-white rounded-2xl border-2 border-gray-100 p-6 shadow-sm">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="font-black text-xl text-gray-800">📢 News</h3>
+                            </div>
+                            <div class="space-y-4">
+                                <div class="flex gap-4 items-start p-3 hover:bg-gray-50 rounded-lg transition cursor-pointer">
+                                    <div class="w-16 h-16 bg-blue-100 rounded-lg flex-shrink-0 flex items-center justify-center text-2xl">❄️</div>
+                                    <div>
+                                        <h4 class="font-bold text-gray-800">Winter Season is Here!</h4>
+                                        <p class="text-sm text-gray-500 font-semibold mt-1">Collect new Ice Blooks and play the new Snowy Survival mode available for a limited time.</p>
+                                    </div>
+                                </div>
+                                <div class="flex gap-4 items-start p-3 hover:bg-gray-50 rounded-lg transition cursor-pointer">
+                                    <div class="w-16 h-16 bg-yellow-100 rounded-lg flex-shrink-0 flex items-center justify-center text-2xl">🏆</div>
+                                    <div>
+                                        <h4 class="font-bold text-gray-800">Tournament Results</h4>
+                                        <p class="text-sm text-gray-500 font-semibold mt-1">Check out the winners of the global Math challenge.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Stats -->
+                        <div class="bg-white rounded-2xl border-2 border-gray-100 p-6 shadow-sm flex flex-col justify-between">
+                            <div>
+                                <h3 class="font-black text-xl text-gray-800 mb-4">My Stats</h3>
+                                <div class="bg-yellow-50 border border-yellow-100 rounded-xl p-4 flex items-center gap-3 mb-3">
+                                    <span class="text-3xl">🪙</span>
+                                    <div>
+                                        <div class="text-2xl font-black text-gray-800">1,250</div>
+                                        <div class="text-xs font-bold text-yellow-600 uppercase">Total Tokens</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <button onclick="nav('library')" class="w-full mt-4 bg-gray-800 text-white py-3 rounded-xl font-bold shadow-[0_4px_0_black] btn-arcade">Go to Library</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. LIBRARY GRID -->
+                <div id="view-library" class="max-w-6xl mx-auto animate-fade-in">
+                     <div id="quiz-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <!-- Cards injected via JS -->
+                    </div>
+                </div>
+
+                <!-- 3. REPORTS VIEW -->
+                <div id="view-reports" class="hidden max-w-5xl mx-auto animate-fade-in">
+                    <div class="flex justify-between items-center mb-6">
+                        <div class="flex gap-2">
+                            <input type="text" placeholder="Search reports..." class="bg-white border-2 border-gray-200 rounded-lg px-4 py-2 font-bold text-sm outline-none focus:border-indigo-500 w-64">
+                        </div>
+                        <button class="text-red-500 font-bold text-sm hover:underline">Clear History</button>
+                    </div>
+                    
+                    <div id="reports-container" class="space-y-4">
+                         <!-- Static Reports for Demo -->
+                         <div class="bg-white p-4 rounded-xl border-2 border-gray-100 flex flex-col sm:flex-row justify-between items-center hover:border-indigo-200 transition group cursor-pointer shadow-sm">
+                            <div class="flex items-center gap-4 w-full">
+                                <div class="bg-green-100 text-green-700 w-16 h-16 rounded-xl flex items-center justify-center text-3xl shadow-sm flex-shrink-0 border-2 border-white">🏰</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <h4 class="font-black text-gray-800 text-lg truncate">Math Blaster</h4>
+                                        <span class="hidden sm:inline-block text-[10px] uppercase font-black tracking-wider bg-gray-100 text-gray-500 px-2 py-0.5 rounded">Tower Defense</span>
+                                    </div>
+                                    <div class="flex items-center gap-4 text-xs font-bold text-gray-400">
+                                        <span>📅 Yesterday</span>
+                                        <span>👤 12 Players</span>
+                                        <span class="text-green-500">🎯 92% Correct</span>
+                                    </div>
+                                </div>
+                                <button class="mt-4 sm:mt-0 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-6 py-2 rounded-lg font-bold text-sm transition">View</button>
+                            </div>
+                        </div>
+                         <div class="bg-white p-4 rounded-xl border-2 border-gray-100 flex flex-col sm:flex-row justify-between items-center hover:border-indigo-200 transition group cursor-pointer shadow-sm">
+                            <div class="flex items-center gap-4 w-full">
+                                <div class="bg-yellow-100 text-yellow-700 w-16 h-16 rounded-xl flex items-center justify-center text-3xl shadow-sm flex-shrink-0 border-2 border-white">💰</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <h4 class="font-black text-gray-800 text-lg truncate">Science Trivia</h4>
+                                        <span class="hidden sm:inline-block text-[10px] uppercase font-black tracking-wider bg-gray-100 text-gray-500 px-2 py-0.5 rounded">Gold Quest</span>
+                                    </div>
+                                    <div class="flex items-center gap-4 text-xs font-bold text-gray-400">
+                                        <span>📅 Oct 24</span>
+                                        <span>👤 24 Players</span>
+                                        <span class="text-yellow-500">🎯 78% Correct</span>
+                                    </div>
+                                </div>
+                                <button class="mt-4 sm:mt-0 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-6 py-2 rounded-lg font-bold text-sm transition">View</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- ================= MODALS ================= -->
+
+    <!-- HOST GAME MODE SELECTION MODAL -->
+    <div id="host-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-90 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden animate-fade-in shadow-2xl">
+            <div class="p-6 border-b border-gray-200 flex justify-between items-center">
+                <h2 class="text-2xl font-black text-gray-800">Select Game Mode</h2>
+                <button onclick="closeModal('host-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-2xl">&times;</button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-6 bg-gray-100 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Mode: Classic -->
+                <div onclick="initiateHostSession('Classic')" class="bg-white rounded-xl overflow-hidden cursor-pointer border-2 border-transparent hover:border-indigo-500 shadow-sm hover:shadow-xl transition group relative h-64">
+                    <div class="h-32 bg-indigo-500 flex items-center justify-center text-5xl">🧩</div>
+                    <div class="p-4">
+                        <h3 class="font-black text-lg text-gray-800">Classic</h3>
+                        <p class="text-xs text-gray-500 font-bold mt-1">Traditional quiz competition.</p>
+                    </div>
+                </div>
+                <!-- Mode: Gold Quest -->
+                <div onclick="initiateHostSession('Gold Quest')" class="bg-white rounded-xl overflow-hidden cursor-pointer border-2 border-transparent hover:border-yellow-500 shadow-sm hover:shadow-xl transition group relative h-64">
+                    <div class="h-32 bg-yellow-400 flex items-center justify-center text-5xl">💰</div>
+                    <div class="p-4">
+                        <h3 class="font-black text-lg text-gray-800">Gold Quest</h3>
+                        <p class="text-xs text-gray-500 font-bold mt-1">Collect gold and steal from others!</p>
+                    </div>
+                </div>
+                <!-- Mode: Tower Defense -->
+                <div onclick="initiateHostSession('Tower Defense')" class="bg-white rounded-xl overflow-hidden cursor-pointer border-2 border-transparent hover:border-green-500 shadow-sm hover:shadow-xl transition group relative h-64">
+                    <div class="h-32 bg-green-500 flex items-center justify-center text-5xl">🏰</div>
+                    <div class="p-4">
+                        <h3 class="font-black text-lg text-gray-800">Tower Defense</h3>
+                        <p class="text-xs text-gray-500 font-bold mt-1">Answer questions to build towers.</p>
+                    </div>
+                </div>
+                 <!-- Mode: Racing -->
+                 <div onclick="initiateHostSession('Racing')" class="bg-white rounded-xl overflow-hidden cursor-pointer border-2 border-transparent hover:border-blue-400 shadow-sm hover:shadow-xl transition group relative h-64">
+                    <div class="h-32 bg-blue-400 flex items-center justify-center text-5xl">🏎️</div>
+                    <div class="p-4">
+                        <h3 class="font-black text-lg text-gray-800">Racing</h3>
+                        <p class="text-xs text-gray-500 font-bold mt-1">Be the first to cross the finish line!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CREATE SET MODAL -->
+    <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-90 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl w-full max-w-2xl animate-fade-in shadow-2xl p-6">
+            <h2 class="text-2xl font-black text-gray-800 mb-4">Create New Question Set</h2>
+            <input type="text" id="new-set-title" placeholder="Enter Title (e.g. Algebra 101)" class="w-full bg-gray-100 border-2 border-gray-200 rounded-xl px-4 py-3 font-bold text-lg mb-4 focus:border-indigo-500 outline-none">
+            <div class="flex justify-end gap-3">
+                <button onclick="closeModal('create-modal')" class="text-gray-500 font-bold px-4 py-2 hover:bg-gray-100 rounded-lg">Cancel</button>
+                <button onclick="saveNewSet()" class="bg-indigo-600 text-white font-bold px-6 py-2 rounded-lg btn-arcade shadow-[0_4px_0_rgb(55,48,163)]">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= LOBBY SCREEN (HOST) ================= -->
+    <div id="host-lobby-screen" class="hidden fixed inset-0 z-[60] bg-indigo-900 flex flex-col text-white">
+        <div class="p-6 flex justify-between items-start">
+            <div>
+                <div class="text-indigo-300 font-bold uppercase tracking-widest text-sm mb-1">Join at QuizNova.com with PIN:</div>
+                <div id="lobby-pin-display" class="text-7xl font-black tracking-widest text-white drop-shadow-lg">------</div>
+                <div id="lobby-mode-display" class="mt-2 text-indigo-400 font-bold uppercase tracking-wider bg-indigo-800 px-3 py-1 rounded inline-block">Game Mode</div>
+            </div>
+            <div class="text-center">
+                <div class="text-6xl font-black mb-1" id="lobby-count">0</div>
+                <div class="text-sm font-bold uppercase text-indigo-300">Players</div>
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-8">
+            <div id="lobby-player-grid" class="flex flex-wrap gap-4 justify-center">
+                <!-- Player names appear here -->
+                <div class="text-indigo-400 text-xl font-bold animate-pulse">Waiting for players to join...</div>
+            </div>
+        </div>
+
+        <div class="p-6 bg-indigo-800 flex justify-between items-center shadow-lg">
+            <button onclick="closeLobby()" class="text-indigo-300 font-bold hover:text-white">Cancel</button>
+            <button onclick="startGame()" class="bg-white text-indigo-900 px-12 py-4 rounded-full font-black text-xl shadow-[0_6px_0_#c7d2fe] btn-arcade hover:bg-gray-100">START GAME</button>
+        </div>
+    </div>
+
+    <!-- ================= PLAYER WAITING SCREEN ================= -->
+    <div id="player-waiting-screen" class="hidden fixed inset-0 z-[60] bg-purple-600 flex flex-col items-center justify-center text-white p-6 text-center">
+        <div class="w-24 h-24 bg-purple-500 rounded-full flex items-center justify-center text-4xl mb-6 pulse-ring relative">
+            👋
+        </div>
+        <h2 class="text-3xl font-black mb-2">You're in!</h2>
+        <p class="text-purple-200 font-bold text-lg">See your name on screen?</p>
+        <div class="mt-8 bg-purple-800 px-6 py-2 rounded-lg font-mono" id="player-wait-pin">PIN: 000000</div>
+    </div>
+
+    <!-- ================= GAME SCREEN (SHARED) ================= -->
+    <div id="game-screen" class="hidden fixed inset-0 z-[70] bg-gray-100 flex flex-col">
+        <!-- Question Header -->
+        <div class="bg-white p-4 shadow-md flex justify-between items-center z-10">
+            <div class="font-bold text-gray-500">Question 1</div>
+            <div class="font-black text-xl text-indigo-600">Time: <span id="game-timer">30</span></div>
+        </div>
+
+        <!-- Question Body -->
+        <div class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <h1 class="text-2xl md:text-4xl font-black text-gray-800 mb-8 max-w-4xl" id="question-text">Which is the largest planet in our solar system?</h1>
+            
+            <!-- Answer Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-4xl h-full max-h-[400px]">
+                <button onclick="submitAnswer(0)" class="bg-red-500 text-white rounded-xl shadow-[0_6px_0_#991b1b] btn-arcade flex items-center justify-center p-6 text-2xl font-bold h-full">
+                    <span class="mr-2">🔺</span> Jupiter
+                </button>
+                <button onclick="submitAnswer(1)" class="bg-blue-500 text-white rounded-xl shadow-[0_6px_0_#1e40af] btn-arcade flex items-center justify-center p-6 text-2xl font-bold h-full">
+                    <span class="mr-2">🔷</span> Mars
+                </button>
+                <button onclick="submitAnswer(2)" class="bg-yellow-500 text-white rounded-xl shadow-[0_6px_0_#854d0e] btn-arcade flex items-center justify-center p-6 text-2xl font-bold h-full">
+                    <span class="mr-2">🟡</span> Earth
+                </button>
+                <button onclick="submitAnswer(3)" class="bg-green-500 text-white rounded-xl shadow-[0_6px_0_#166534] btn-arcade flex items-center justify-center p-6 text-2xl font-bold h-full">
+                    <span class="mr-2">🟩</span> Venus
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= JAVASCRIPT LOGIC ================= -->
+    <script type="module">
+        // Import Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, updateDoc, arrayUnion, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // GLOBAL CONFIG
+        let app, auth, db, appId;
+
+        // SAFE INIT
+        try {
+            // Check config
+            const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+            if(!configStr) throw new Error("Firebase Config missing");
+
+            const firebaseConfig = JSON.parse(configStr);
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            
+            console.log("Firebase Initialized Successfully");
+            
+            // Start Auth
+            initAuth();
+
+        } catch (e) {
+            console.error("Initialization Failed:", e);
+        }
+
+        // GLOBAL STATE
+        let user = null;
+        let currentGameId = null;
+        let isHost = false;
+        let unsubscribeGame = null;
+        let selectedSetTitle = ''; 
+        let quizList = [
+            { title: "General Knowledge" },
+            { title: "Science Trivia" },
+            { title: "Math Blaster" }
+        ];
+
+        // AUTH FUNCTION
+        async function initAuth() {
+            if(!auth) return;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Auth Failed:", err);
+            }
+        }
+
+        if(auth) {
+            auth.onAuthStateChanged((u) => {
+                if (u) {
+                    user = u;
+                    console.log("Logged in as", user.uid);
+                }
+            });
+        }
+
+        // --- GLOBAL FUNCTIONS EXPORT ---
+        // Manually assign to window for HTML access
+        
+        window.handleLogin = (role) => {
+            if (role === 'Teacher') {
+                isHost = true;
+                document.getElementById('auth-screen').classList.add('hidden');
+                document.getElementById('app-layout').classList.remove('hidden');
+                window.nav('dashboard'); 
+                window.renderLibrary();
+            }
+        };
+
+        window.nav = (view) => {
+            document.querySelectorAll('.sidebar-link').forEach(el => el.classList.remove('active'));
+            const link = document.getElementById(`link-${view}`);
+            if(link) link.classList.add('active');
+
+            ['view-dashboard', 'view-library', 'view-reports'].forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.classList.add('hidden');
+            });
+
+            const target = document.getElementById(`view-${view}`);
+            if(target) target.classList.remove('hidden');
+            
+            const titles = { dashboard: 'Dashboard', library: 'My Sets', reports: 'History' };
+            const titleEl = document.getElementById('page-title');
+            if(titleEl) titleEl.textContent = titles[view] || 'QuizNova';
+        }
+
+        window.joinGame = async () => {
+            if(!db || !user) {
+                alert("Database not ready.");
+                return;
+            }
+
+            const nameInput = document.getElementById('player-name-input');
+            const pinInput = document.getElementById('game-pin-input');
+            
+            const name = nameInput.value.trim();
+            const pin = pinInput.value.trim().toUpperCase();
+            
+            if (!name || !pin) return alert("Please enter name and PIN");
+
+            try {
+                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', pin);
+                const gameSnap = await getDoc(gameRef);
+
+                if (gameSnap.exists()) {
+                    currentGameId = pin;
+                    const playerRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', pin, 'players', user.uid);
+                    await setDoc(playerRef, {
+                        name: name,
+                        score: 0,
+                        joinedAt: Date.now()
+                    });
+
+                    document.getElementById('auth-screen').classList.add('hidden');
+                    document.getElementById('player-waiting-screen').classList.remove('hidden');
+                    document.getElementById('player-wait-pin').textContent = `PIN: ${pin}`;
+
+                    listenToGame(pin);
+                } else {
+                    const errEl = document.getElementById('join-error');
+                    if(errEl) errEl.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error("Join Game Error:", error);
+                alert("Failed to join. Check console.");
+            }
+        };
+
+        window.openHostModal = (quizTitle) => {
+            selectedSetTitle = quizTitle;
+            const modal = document.getElementById('host-modal');
+            if(modal) modal.classList.remove('hidden');
+        };
+
+        window.initiateHostSession = async (gameMode) => {
+            const modal = document.getElementById('host-modal');
+            if(modal) modal.classList.add('hidden');
+            
+            if (!user || !db) return;
+            
+            const pin = Math.floor(100000 + Math.random() * 900000).toString();
+            currentGameId = pin;
+
+            try {
+                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', pin);
+                await setDoc(gameRef, {
+                    hostId: user.uid,
+                    quizTitle: selectedSetTitle,
+                    gameMode: gameMode,
+                    status: 'lobby',
+                    createdAt: Date.now(),
+                    currentQuestion: 0
+                });
+
+                document.getElementById('app-layout').classList.add('hidden');
+                document.getElementById('host-lobby-screen').classList.remove('hidden');
+                document.getElementById('lobby-pin-display').textContent = pin;
+                const modeDisplay = document.getElementById('lobby-mode-display');
+                if(modeDisplay) modeDisplay.textContent = gameMode;
+
+                const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'games', pin, 'players');
+                
+                // Listener with error handling
+                onSnapshot(playersCol, (snapshot) => {
+                    const list = document.getElementById('lobby-player-grid');
+                    if(!list) return;
+                    list.innerHTML = '';
+                    let count = 0;
+                    snapshot.forEach(doc => {
+                        const p = doc.data();
+                        count++;
+                        const badge = document.createElement('div');
+                        badge.className = "bg-indigo-700 px-6 py-3 rounded-xl font-bold text-white shadow-md animate-fade-in flex items-center gap-2";
+                        badge.innerHTML = `<span>👤</span> ${p.name}`;
+                        list.appendChild(badge);
+                    });
+                    const countEl = document.getElementById('lobby-count');
+                    if(countEl) countEl.textContent = count;
+                    if(count === 0) list.innerHTML = '<div class="text-indigo-400 text-xl font-bold animate-pulse">Waiting for players to join...</div>';
+                }, (error) => {
+                    console.error("Lobby Listener Error:", error);
+                });
+
+            } catch(e) {
+                console.error("Host Session Error:", e);
+                alert("Could not start game session.");
+            }
+        };
+
+        window.startGame = async () => {
+            if(!db || !currentGameId) return;
+            try {
+                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', currentGameId);
+                await updateDoc(gameRef, { status: 'playing' });
+            } catch(e) {
+                console.error("Start Game Error:", e);
+            }
+        };
+
+        window.closeLobby = () => {
+             document.getElementById('host-lobby-screen').classList.add('hidden');
+             document.getElementById('app-layout').classList.remove('hidden');
+        };
+
+        window.submitAnswer = async (index) => {
+            if(!currentGameId || !user || !db) return;
+            try {
+                const btns = document.querySelectorAll('#game-screen button');
+                btns.forEach(b => b.classList.add('opacity-50', 'pointer-events-none'));
+                if(btns[index]) {
+                    btns[index].classList.remove('opacity-50');
+                    btns[index].innerText = "Sent!";
+                }
+                const playerRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', currentGameId, 'players', user.uid);
+                await updateDoc(playerRef, { score: increment(100) });
+            } catch(e) {
+                console.error("Submit Answer Error:", e);
+            }
+        };
+
+        // --- UI HELPERS ---
+        window.openCreateModal = () => {
+             const modal = document.getElementById('create-modal');
+             if(modal) modal.classList.remove('hidden');
+        };
+        window.closeModal = (id) => {
+             const modal = document.getElementById(id);
+             if(modal) modal.classList.add('hidden');
+        };
+
+        window.saveNewSet = () => {
+            const titleInput = document.getElementById('new-set-title');
+            if(!titleInput) return;
+            const title = titleInput.value;
+            if(!title) return;
+            quizList.push({ title: title });
+            window.renderLibrary();
+            titleInput.value = '';
+            window.closeModal('create-modal');
+        };
+
+        // Internal Helpers attached to window if needed or kept local
+        function listenToGame(pin) {
+            if(!db) return;
+            const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', pin);
+            
+            unsubscribeGame = onSnapshot(gameRef, (doc) => {
+                const data = doc.data();
+                if (data && data.status === 'playing') {
+                    document.getElementById('player-waiting-screen').classList.add('hidden');
+                    document.getElementById('host-lobby-screen').classList.add('hidden');
+                    document.getElementById('game-screen').classList.remove('hidden');
+                    const btns = document.querySelectorAll('#game-screen button');
+                    btns.forEach(b => {
+                        b.classList.remove('opacity-50', 'pointer-events-none');
+                    });
+                }
+            }, (error) => {
+                console.error("Game Listener Error:", error);
+            });
+        }
+
+        window.renderLibrary = () => {
+            const grid = document.getElementById('quiz-grid');
+            if(!grid) return;
+            grid.innerHTML = "";
+            
+            // Add Create Card
+            const createCard = document.createElement('div');
+            createCard.className = "bg-gray-200 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center p-8 cursor-pointer hover:bg-gray-300 hover:border-gray-400 transition min-h-[220px]";
+            createCard.onclick = () => window.openCreateModal();
+            createCard.innerHTML = `<div class="text-4xl text-gray-400 mb-2">+</div><div class="font-bold text-gray-500">Create Set</div>`;
+            grid.appendChild(createCard);
+
+            quizList.forEach(q => {
+                const card = document.createElement('div');
+                card.className = "bg-white rounded-2xl border-2 border-gray-200 shadow-sm hover:shadow-lg transition flex flex-col overflow-hidden group";
+                
+                // Use DOM element creation for button to safely bind event with string data
+                const btn = document.createElement('button');
+                btn.className = "w-full bg-indigo-600 text-white py-3 rounded-xl text-sm font-bold shadow-[0_4px_0_rgb(55,48,163)] btn-arcade hover:bg-indigo-700";
+                btn.textContent = "HOST LIVE";
+                btn.onclick = () => window.openHostModal(q.title);
+
+                card.innerHTML = `
+                    <div class="h-28 bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                        <span class="text-4xl filter drop-shadow-md">📝</span>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="font-black text-gray-800 text-lg mb-4">${q.title.replace(/</g, "&lt;")}</h3>
+                    </div>
+                `;
+                // Append the safe button
+                card.querySelector('.p-5').appendChild(btn);
+                grid.appendChild(card);
+            });
+        }
+        
+    </script>
+  </body>
+</html>
